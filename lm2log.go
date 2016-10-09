@@ -147,6 +147,23 @@ func (l *Log) Get(record uint64) (string, error) {
 	return data, nil
 }
 
+func (l *Log) SetCommitted(record uint64, data string) error {
+	wb := lm2.NewWriteBatch()
+	recordStr := strconv.FormatUint(record, 10)
+	committedStr, err := cursorGet(cur, CommittedKey)
+	committed, err := strconv.ParseUint(committedStr, 10, 64)
+	if err != nil {
+		return err
+	}
+	if committed < record {
+		wb.Set(committedStr, recordStr)
+	}
+
+	wb.Set(recordStr, data)
+	_, err := l.col.Update(wb)
+	return err
+}
+
 func cursorGet(cur *lm2.Cursor, key string) (string, error) {
 	cur.Seek(key)
 	for cur.Next() {
