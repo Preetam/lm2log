@@ -17,22 +17,64 @@ var (
 )
 
 type Log struct {
-	col           *lm2.Collection
-	currentRecord uint64
+	col *lm2.Collection
 }
 
-func New(col *lm2.Collection) *Log {
-	return &Log{
+func New(col *lm2.Collection) (*Log, error) {
+	l := &Log{
 		col: col,
 	}
+
+	wb := lm2.NewWriteBatch()
+	wb.Set(CommittedKey, "")
+	wb.Delete(PendingKey)
+	_, err := col.Update(wb)
+
+	return l, err
+}
+
+func Open(col *lm2.Collection) (*Log, error) {
+	l := &Log{
+		col: col,
+	}
+
+	cur, err := col.NewCursor()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check CommittedKey
+	_, err = cursorGet(cur, CommittedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return l, nil
 }
 
 func (l *Log) Prepare(data string) error {
+	cur, err := l.col.NewCursor()
+	if err != nil {
+		return err
+	}
+
+	// Check if something is already prepared.
+	if _, err := cursorGet(cur, PendingKey); err == nil {
+		return errors.New("lm2col: already prepared data")
+	}
+
+	// Prepare
+	committedStr, err := cursorGet(cur, CommittedKey)
+	committed, err := strconv.ParseUint(committedStr, 10, 64)
+	if err != nil {
+		return err
+	}
+
 	wb := lm2.NewWriteBatch()
-	recordNum := strconv.FormatUint(l.currentRecord, 10)
-	wb.Set(recordNum, data)
-	wb.Set(PendingKey, recordNum)
-	_, err := l.col.Update(wb)
+	nextRecordNum := strconv.FormatUint(committed, 10)
+	wb.Set(nextRecordNum, data)
+	wb.Set(PendingKey, nextRecordNum)
+	_, err = l.col.Update(wb)
 	return err
 }
 
@@ -56,8 +98,53 @@ func (l *Log) Rollback() error {
 }
 
 func (l *Log) Commit() error {
-	// TODO
-	return errors.New("not implemented")
+	cur, err := l.col.NewCursor()
+	if err != nil {
+		return err
+	}
+
+	// Check if something is already prepared.
+	prepared, err := cursorGet(cur, PendingKey)
+	if err != nil {
+		return errors.New("lm2col: couldn't get prepared data")
+	}
+
+	// Commit
+	wb := lm2.NewWriteBatch()
+	wb.Set(CommittedKey, prepared)
+	wb.Delete(PendingKey)
+	_, err = l.col.Update(wb)
+
+	return err
+}
+
+func (l *Log) Pending() (uint64, error) {
+	cur, err := l.col.NewCursor()
+	if err != nil {
+		return 0, err
+	}
+
+	// Check if something is already prepared.
+	prepared, err := cursorGet(cur, PendingKey)
+	if err != nil {
+		return 0, errors.New("lm2col: couldn't get prepared data")
+	}
+
+	return strconv.ParseUint(prepared, 10, 64)
+}
+
+func (l *Log) Get(record uint64) (string, error) {
+	cur, err := l.col.NewCursor()
+	if err != nil {
+		return "", err
+	}
+
+	// Check if something is already prepared.
+	data, err := cursorGet(cur, strconv.FormatUint(record, 10))
+	if err != nil {
+		return "", errors.New("lm2col: couldn't get record")
+	}
+	return data, nil
 }
 
 func cursorGet(cur *lm2.Cursor, key string) (string, error) {
