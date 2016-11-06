@@ -133,6 +133,21 @@ func (l *Log) Pending() (uint64, error) {
 	return strconv.ParseUint(prepared, 10, 64)
 }
 
+func (l *Log) Committed() (uint64, error) {
+	cur, err := l.col.NewCursor()
+	if err != nil {
+		return 0, err
+	}
+
+	// Check if something is already prepared.
+	committed, err := cursorGet(cur, CommittedKey)
+	if err != nil {
+		return 0, errors.New("lm2col: couldn't get committed data")
+	}
+
+	return strconv.ParseUint(committed, 10, 64)
+}
+
 func (l *Log) Get(record uint64) (string, error) {
 	cur, err := l.col.NewCursor()
 	if err != nil {
@@ -148,6 +163,11 @@ func (l *Log) Get(record uint64) (string, error) {
 }
 
 func (l *Log) SetCommitted(record uint64, data string) error {
+	cur, err := l.col.NewCursor()
+	if err != nil {
+		return err
+	}
+
 	wb := lm2.NewWriteBatch()
 	recordStr := strconv.FormatUint(record, 10)
 	committedStr, err := cursorGet(cur, CommittedKey)
@@ -160,7 +180,7 @@ func (l *Log) SetCommitted(record uint64, data string) error {
 	}
 
 	wb.Set(recordStr, data)
-	_, err := l.col.Update(wb)
+	_, err = l.col.Update(wb)
 	return err
 }
 
