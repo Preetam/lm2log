@@ -1,3 +1,4 @@
+// Package lm2log implements a commit log on top of lm2.
 package lm2log
 
 import (
@@ -8,31 +9,34 @@ import (
 )
 
 const (
-	PendingKey   = "pending"
-	CommittedKey = "committed"
+	preparedKey  = "prepared"
+	committedKey = "committed"
 )
 
 var (
 	errNotFound = errors.New("lm2log: not found")
 )
 
+// Log is a commit log.
 type Log struct {
 	col *lm2.Collection
 }
 
+// New initializes a commit log in an lm2 collection.
 func New(col *lm2.Collection) (*Log, error) {
 	l := &Log{
 		col: col,
 	}
 
 	wb := lm2.NewWriteBatch()
-	wb.Set(CommittedKey, "")
-	wb.Delete(PendingKey)
+	wb.Set(committedKey, "0")
+	wb.Delete(preparedKey)
 	_, err := col.Update(wb)
 
 	return l, err
 }
 
+// Open opens an existing commit log in an lm2 collection.
 func Open(col *lm2.Collection) (*Log, error) {
 	l := &Log{
 		col: col,
@@ -43,8 +47,8 @@ func Open(col *lm2.Collection) (*Log, error) {
 		return nil, err
 	}
 
-	// Check CommittedKey
-	_, err = cursorGet(cur, CommittedKey)
+	// Check committedKey
+	_, err = cursorGet(cur, committedKey)
 	if err != nil {
 		return nil, err
 	}
@@ -52,6 +56,7 @@ func Open(col *lm2.Collection) (*Log, error) {
 	return l, nil
 }
 
+// Prepare durably prepares data in the log.
 func (l *Log) Prepare(data string) error {
 	cur, err := l.col.NewCursor()
 	if err != nil {
@@ -59,32 +64,33 @@ func (l *Log) Prepare(data string) error {
 	}
 
 	// Check if something is already prepared.
-	if _, err := cursorGet(cur, PendingKey); err == nil {
+	if _, err := cursorGet(cur, preparedKey); err == nil {
 		return errors.New("lm2col: already prepared data")
 	}
 
 	// Prepare
-	committedStr, err := cursorGet(cur, CommittedKey)
+	committedStr, err := cursorGet(cur, committedKey)
 	committed, err := strconv.ParseUint(committedStr, 10, 64)
 	if err != nil {
 		return err
 	}
 
 	wb := lm2.NewWriteBatch()
-	nextRecordNum := strconv.FormatUint(committed, 10)
+	nextRecordNum := strconv.FormatUint(committed+1, 10)
 	wb.Set(nextRecordNum, data)
-	wb.Set(PendingKey, nextRecordNum)
+	wb.Set(preparedKey, nextRecordNum)
 	_, err = l.col.Update(wb)
 	return err
 }
 
+// Rollback clears any prepared data.
 func (l *Log) Rollback() error {
 	cur, err := l.col.NewCursor()
 	if err != nil {
 		return err
 	}
 
-	if _, err = cursorGet(cur, PendingKey); err != nil {
+	if _, err = cursorGet(cur, preparedKey); err != nil {
 		if err == errNotFound {
 			return nil
 		}
@@ -92,11 +98,12 @@ func (l *Log) Rollback() error {
 	}
 
 	wb := lm2.NewWriteBatch()
-	wb.Delete(PendingKey)
+	wb.Delete(preparedKey)
 	_, err = l.col.Update(wb)
 	return err
 }
 
+// Commit marks the prepared data as committed.
 func (l *Log) Commit() error {
 	cur, err := l.col.NewCursor()
 	if err != nil {
@@ -104,28 +111,29 @@ func (l *Log) Commit() error {
 	}
 
 	// Check if something is already prepared.
-	prepared, err := cursorGet(cur, PendingKey)
+	prepared, err := cursorGet(cur, preparedKey)
 	if err != nil {
 		return errors.New("lm2col: couldn't get prepared data")
 	}
 
 	// Commit
 	wb := lm2.NewWriteBatch()
-	wb.Set(CommittedKey, prepared)
-	wb.Delete(PendingKey)
+	wb.Set(committedKey, prepared)
+	wb.Delete(preparedKey)
 	_, err = l.col.Update(wb)
 
 	return err
 }
 
-func (l *Log) Pending() (uint64, error) {
+// Prepared returns the currently prepared record number.
+func (l *Log) Prepared() (uint64, error) {
 	cur, err := l.col.NewCursor()
 	if err != nil {
 		return 0, err
 	}
 
 	// Check if something is already prepared.
-	prepared, err := cursorGet(cur, PendingKey)
+	prepared, err := cursorGet(cur, preparedKey)
 	if err != nil {
 		return 0, errors.New("lm2col: couldn't get prepared data")
 	}
@@ -133,14 +141,14 @@ func (l *Log) Pending() (uint64, error) {
 	return strconv.ParseUint(prepared, 10, 64)
 }
 
+// Committed returns the latest committed record number.
 func (l *Log) Committed() (uint64, error) {
 	cur, err := l.col.NewCursor()
 	if err != nil {
 		return 0, err
 	}
 
-	// Check if something is already prepared.
-	committed, err := cursorGet(cur, CommittedKey)
+	committed, err := cursorGet(cur, committedKey)
 	if err != nil {
 		return 0, errors.New("lm2col: couldn't get committed data")
 	}
@@ -148,6 +156,7 @@ func (l *Log) Committed() (uint64, error) {
 	return strconv.ParseUint(committed, 10, 64)
 }
 
+// Get retrieves data in the commit log associated with the given record number.
 func (l *Log) Get(record uint64) (string, error) {
 	cur, err := l.col.NewCursor()
 	if err != nil {
@@ -162,6 +171,8 @@ func (l *Log) Get(record uint64) (string, error) {
 	return data, nil
 }
 
+// SetCommitted updates the data at the given record number and updates
+// any internal state accordingly.
 func (l *Log) SetCommitted(record uint64, data string) error {
 	cur, err := l.col.NewCursor()
 	if err != nil {
@@ -170,7 +181,7 @@ func (l *Log) SetCommitted(record uint64, data string) error {
 
 	wb := lm2.NewWriteBatch()
 	recordStr := strconv.FormatUint(record, 10)
-	committedStr, err := cursorGet(cur, CommittedKey)
+	committedStr, err := cursorGet(cur, committedKey)
 	committed, err := strconv.ParseUint(committedStr, 10, 64)
 	if err != nil {
 		return err
