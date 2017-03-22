@@ -113,6 +113,9 @@ func (l *Log) Commit() error {
 	// Check if something is already prepared.
 	prepared, err := cursorGet(cur, preparedKey)
 	if err != nil {
+		if err == ErrNotFound {
+			return nil
+		}
 		return errors.New("lm2col: couldn't get prepared data")
 	}
 
@@ -135,6 +138,9 @@ func (l *Log) Prepared() (uint64, error) {
 	// Check if something is already prepared.
 	prepared, err := cursorGet(cur, preparedKey)
 	if err != nil {
+		if err == ErrNotFound {
+			return 0, ErrNotFound
+		}
 		return 0, errors.New("lm2col: couldn't get prepared data")
 	}
 
