@@ -14,7 +14,7 @@ const (
 )
 
 var (
-	errNotFound = errors.New("lm2log: not found")
+	ErrNotFound = errors.New("lm2log: not found")
 )
 
 // Log is a commit log.
@@ -91,7 +91,7 @@ func (l *Log) Rollback() error {
 	}
 
 	if _, err = cursorGet(cur, preparedKey); err != nil {
-		if err == errNotFound {
+		if err == ErrNotFound {
 			return nil
 		}
 		return err
@@ -205,5 +205,5 @@ func cursorGet(cur *lm2.Cursor, key string) (string, error) {
 			return cur.Value(), nil
 		}
 	}
-	return "", errNotFound
+	return "", ErrNotFound
 }
