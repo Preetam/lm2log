@@ -14,7 +14,8 @@ const (
 )
 
 var (
-	ErrNotFound = errors.New("lm2log: not found")
+	ErrNotFound     = errors.New("lm2log: not found")
+	ErrDoesNotExist = errors.New("lm2log: does not exist")
 )
 
 // Log is a commit log. NOTE: It is *not* goroutine-safe.
@@ -45,8 +46,11 @@ func New(file string) (*Log, error) {
 
 // Open opens an existing commit log in an lm2 collection.
 func Open(file string) (*Log, error) {
-	col, err := lm2.NewCollection(file, 100)
+	col, err := lm2.OpenCollection(file, 100)
 	if err != nil {
+		if err == lm2.ErrDoesNotExist {
+			return nil, ErrDoesNotExist
+		}
 		return nil, err
 	}
 
